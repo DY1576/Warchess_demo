@@ -367,11 +367,14 @@ class Game:
                     self._execute_support(piece, battle)
                     return
 
-        # 3. 检查攻击目标（骑兵）
+        # 3. 检查攻击目标（骑兵 / 步兵）
         if (row, col) in self.valid_targets:
             target = self.board.get_piece_at(row, col)
             if target:
-                self._execute_cavalry_attack(piece, target)
+                if piece.piece_type == PieceType.CAVALRY:
+                    self._execute_cavalry_attack(piece, target)
+                elif piece.piece_type == PieceType.INFANTRY:
+                    self._execute_infantry_attack(piece, target, row, col)
             return
 
         # 4. 检查移动目标

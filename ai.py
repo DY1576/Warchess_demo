@@ -54,60 +54,118 @@ class AI:
         # 如果被完全死路卡住，返回能到达的离目标最近的第一步
         return closest_first_step
 
+    def _get_closest_player_piece(self, piece):
+        """返回距离当前AI棋子最近的玩家棋子"""
+        best = None
+        best_dist = 999
+        for enemy in self.board.player_pieces:
+            dist = abs(enemy.row - piece.row) + abs(enemy.col - piece.col)
+            if dist < best_dist:
+                best_dist = dist
+                best = enemy
+        return best, best_dist
+
+    def _evaluate_move_toward(self, piece, target):
+        """评估移动方向，优先靠近攻击目标或战斗。"""
+        if target is None or not piece.can_move():
+            return None
+        next_step = self._get_bfs_path(piece, target.row, target.col)
+        if next_step and self.board.get_piece_at(next_step[0], next_step[1]) is None:
+            return next_step
+        return None
+
     def _evaluate_all_actions(self, capital):
         """遍历所有AI棋子，评估并返回得分最高的行动"""
         best_action = None
         best_score = -9999
 
+        active_battles = self.board.battle_manager.get_all_active_battles()
+        closest_enemy_cache = {}
+
         for piece in self.board.ai_pieces:
             if piece.is_in_battle or piece.is_supporting or not piece.can_act():
                 continue
 
+            nearest_enemy, enemy_dist = self._get_closest_player_piece(piece)
+
             # 1. 评估炮兵轰炸 (高优，白嫖伤害)
             if piece.piece_type == PieceType.ARTILLERY:
+                bombard_targets = []
                 for enemy in self.board.player_pieces:
                     if piece.can_bombard(enemy.row, enemy.col, self.board):
-                        score = 80 if enemy.piece_type == PieceType.CAPITAL else 50
-                        if score > best_score:
-                            best_score, best_action = score, ('bombard', {'piece': piece, 'target': enemy})
-                continue # 炮兵不移动，直接结算下一颗棋子
+                        score = 90 if enemy.piece_type == PieceType.CAPITAL else 55
+                        bombard_targets.append((score, enemy))
+                if bombard_targets:
+                    score, enemy = max(bombard_targets, key=lambda item: item[0])
+                    if score > best_score:
+                        best_score, best_action = score, ('bombard', {'piece': piece, 'target': enemy})
+                    continue
 
-            # 2. 评估直接攻击
+                # 2. 评估炮兵支援
+                if piece.can_support():
+                    for battle in active_battles:
+                        if self.board.get_support_range_for_battle(battle, piece):
+                            score = 60
+                            if score > best_score:
+                                best_score, best_action = score, ('support', {'piece': piece, 'battle': battle, 'side': 'attacker' if battle.attacker.owner == 'ai' else 'defender'})
+
+                # 3. 评估炮兵移动到更有利位置
+                if piece.can_move():
+                    if active_battles:
+                        # 让炮兵靠近当前战斗中心
+                        battle_target = active_battles[0].attacker if active_battles[0].attacker.owner == 'player' else active_battles[0].defender
+                        next_step = self._evaluate_move_toward(piece, battle_target)
+                    else:
+                        next_step = self._evaluate_move_toward(piece, nearest_enemy)
+                    if next_step:
+                        score = 30 + max(0, 6 - enemy_dist)
+                        if score > best_score:
+                            best_score, best_action = score, ('move', {'piece': piece, 'target_row': next_step[0], 'target_col': next_step[1]})
+                continue
+
+            # 4. 评估直接攻击
             if piece.can_attack():
                 enemies = self.board.get_adjacent_enemy_pieces(piece)
                 for enemy in enemies:
                     if enemy.piece_type == PieceType.CAPITAL:
-                        score = 1000 # 斩首最高优先级
+                        score = 1000
                     elif enemy.piece_type == PieceType.ARTILLERY:
-                        score = 70   # 优先秒杀炮兵
+                        score = 80
                     else:
-                        score = 40
-                    
+                        score = 50
                     if score > best_score:
                         best_score, best_action = score, ('move_and_attack', {'piece': piece, 'target': enemy, 'target_row': enemy.row, 'target_col': enemy.col})
 
-            # 3. 评估支援
+            # 5. 评估支援
             if piece.can_support():
-                for battle in self.board.battle_manager.get_all_active_battles():
-                    # 判断支援阵营
+                for battle in active_battles:
                     side = 'attacker' if battle.attacker.owner == 'ai' else ('defender' if battle.defender.owner == 'ai' else None)
                     if side:
-                        main_piece = battle.attacker if side == 'attacker' else battle.defender
-                        dist = abs(piece.row - main_piece.row) + abs(piece.col - main_piece.col)
-                        if dist <= piece.get_support_range():
-                            score = 60 # 支援队友优先级较高
+                        if self.board.get_support_range_for_battle(battle, piece):
+                            score = 70
                             if score > best_score:
                                 best_score, best_action = score, ('support', {'piece': piece, 'battle': battle, 'side': side})
 
-            # 4. 评估移动（BFS寻路逼近首都）
-            if piece.can_move() and capital:
-                next_step = self._get_bfs_path(piece, capital.row, capital.col)
-                if next_step and self.board.get_piece_at(next_step[0], next_step[1]) is None:
-                    # 距离越近，移动意愿越高
-                    dist_to_cap = abs(next_step[0] - capital.row) + abs(next_step[1] - capital.col)
-                    score = 20 - dist_to_cap 
-                    if score > best_score:
-                        best_score, best_action = score, ('move', {'piece': piece, 'target_row': next_step[0], 'target_col': next_step[1]})
+            # 6. 评估移动（靠近敌人或战斗）
+            if piece.can_move():
+                move_target = None
+                if active_battles:
+                    # 选择最近的激活战斗作为目标
+                    battle_centers = [battle.attacker if battle.attacker.owner == 'player' else battle.defender for battle in active_battles]
+                    move_target = min(battle_centers, key=lambda t: abs(t.row - piece.row) + abs(t.col - piece.col))
+                else:
+                    move_target = nearest_enemy
+
+                if move_target:
+                    next_step = self._evaluate_move_toward(piece, move_target)
+                    if next_step:
+                        score = 40 + max(0, 6 - enemy_dist)
+                        if piece.piece_type == PieceType.CAVALRY:
+                            score += 5
+                        elif piece.piece_type == PieceType.INFANTRY:
+                            score += 0
+                        if score > best_score:
+                            best_score, best_action = score, ('move', {'piece': piece, 'target_row': next_step[0], 'target_col': next_step[1]})
 
         return best_action or ('end_turn', {})
 
