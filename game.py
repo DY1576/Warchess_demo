@@ -109,19 +109,21 @@ class Game:
         self.ai = AI(self.board)
         self.ai.board.battle_manager = self.battle_manager
 
-        self.state = 'player_turn'
         self.current_turn = 0
         self.actions_used = 0
         self.winner = None
-        self.selected_piece = None
-        self.valid_moves = []
-        self.valid_targets = []
-        self.valid_bombard_targets = []
-        self.valid_support_targets = []
-        self.valid_retreat_positions = []
-        self.action_mode = 'idle'
-        self.message = "Right-click to select, Left-click to act"
+        self._clear_selection()
         self._reset_turn_status()
+
+        # [新增逻辑]：根据阵营决定谁先动
+        if player_side == 'black':
+            self.state = 'player_turn'
+            self.message = "Right-click to select, Left-click to act"
+        else:
+            # 玩家选白棋，黑棋（AI）先动
+            self.state = 'ai_turn'
+            self.message = "AI thinking..."
+            self._switch_to_ai()
 
     def _reset_turn_status(self):
         """重置所有棋子的回合状态"""
