@@ -632,48 +632,7 @@ class Game:
         self._ai_turn()
 
     def _ai_turn(self):
-        actions = self.ai.make_turn(self.board)
-
-        for action in actions:
-            action_type = action['action_type']
-
-            if action_type == 'move':
-                piece = action['piece']
-                row, col = action['target_row'], action['target_col']
-                self.board.move_piece(piece, row, col)
-
-            elif action_type == 'move_and_attack':
-                piece = action['piece']
-                target = action['target']
-                row, col = action['target_row'], action['target_col']
-                if target.piece_type == PieceType.ARTILLERY:
-                    self.board.move_piece_force(piece, row, col)
-                    self.board.remove_piece(target)
-                    piece.has_attacked_this_turn = True
-                    piece.has_acted_this_turn = True
-                else:
-                    battle = self.battle_manager.create_battle(piece, target, self.board)
-                    if battle:
-                        self.board.move_piece_force(piece, row, col)
-                        piece.has_attacked_this_turn = True
-                        piece.has_acted_this_turn = True
-
-            elif action_type == 'bombard':
-                artillery = action['piece']
-                target = action['target']
-                damage = artillery.bombard(target)
-                if damage > 0:
-                    destroyed = target.take_damage(damage)
-                    if destroyed:
-                        self.board.remove_piece(target)
-                artillery.has_attacked_this_turn = True
-
-            elif action_type == 'support':
-                supporter = action['piece']
-                battle = action['battle']
-                side = action['side']
-                if self.battle_manager.add_support_to_battle(battle, supporter, side):
-                    supporter.has_acted_this_turn = True
+        self.ai.make_turn(self.board)
 
         if self.battle_manager.get_pending_count() > 0:
             self.state = 'battle_resolution'

@@ -57,41 +57,67 @@ class AI:
 
     def _piece_value(self, piece):
         if piece.piece_type == PieceType.CAPITAL:
-            return 200
+            return 240
         if piece.piece_type == PieceType.ARTILLERY:
-            return 130
+            return 140
         if piece.piece_type == PieceType.CAVALRY:
-            return 110
+            return 120
         if piece.piece_type == PieceType.INFANTRY:
-            return 90
-        return 50
+            return 100
+        return 60
+
+    def _target_importance(self, enemy):
+        score = self._piece_value(enemy)
+        if enemy.piece_type == PieceType.CAPITAL:
+            score += 260
+        if enemy.piece_type == PieceType.ARTILLERY:
+            score += 80
+        return score
 
     def _attack_score(self, piece, enemy):
-        score = self._piece_value(enemy) + 20
+        score = self._target_importance(enemy) + 100
         if piece.piece_type == PieceType.CAVALRY:
-            score += 15
+            score += 40
         if enemy.piece_type == PieceType.ARTILLERY:
-            score += 15
+            score += 30
         if enemy.piece_type == PieceType.CAPITAL:
-            score += 200
+            score += 220
+
+        score += len(self.board.get_adjacent_enemy_pieces(enemy)) * 15
+
+        capital = self.board.get_capital('player')
+        if capital and abs(enemy.row - capital.row) + abs(enemy.col - capital.col) <= 3:
+            score += 60
+
+        if piece.row < self._get_average_ai_row():
+            score += 25
+
         return score
 
     def _bombard_score(self, artillery, enemy):
-        score = self._piece_value(enemy) + 40
+        score = self._target_importance(enemy) + 80
         if enemy.piece_type == PieceType.CAPITAL:
-            score += 150
+            score += 200
         if enemy.piece_type == PieceType.ARTILLERY:
-            score += 50
+            score += 70
+
+        capital = self.board.get_capital('player')
+        if capital and abs(enemy.row - capital.row) + abs(enemy.col - capital.col) <= 3:
+            score += 35
+
         return score
 
     def _support_score(self, supporter, battle):
         score = 90
+        score += (self._piece_value(battle.attacker) + self._piece_value(battle.defender)) // 3
         if battle.attacker.piece_type == PieceType.CAPITAL or battle.defender.piece_type == PieceType.CAPITAL:
-            score += 40
+            score += 70
         if supporter.piece_type == PieceType.ARTILLERY:
-            score += 15
+            score += 25
         if supporter.piece_type == PieceType.CAVALRY:
-            score += 10
+            score += 20
+        if supporter.row > self._get_average_ai_row():
+            score += 20
         return score
 
     def _distance_to_nearest_enemy(self, row, col):
@@ -107,105 +133,95 @@ class AI:
             return 0
         return sum(piece.row for piece in self.board.ai_pieces) / len(self.board.ai_pieces)
 
-    def _position_score(self, piece, target_row, target_col, priority_enemy, capital, active_battles):
+    def _future_value(self, piece, target_row, target_col):
+        value = 0
+        for enemy in self.board.player_pieces:
+            dist = abs(enemy.row - target_row) + abs(enemy.col - target_col)
+            if piece.piece_type == PieceType.ARTILLERY and 0 < dist <= 2:
+                value += self._piece_value(enemy) * 0.18
+            if piece.can_attack() and dist == 1:
+                value += 30
+            elif piece.can_attack() and dist == 2:
+                value += 12
+        return value
+
+    def _move_score(self, piece, target_row, target_col, priority_enemy, capital, active_battles):
         score = 0
         current_dist = self._distance_to_nearest_enemy(piece.row, piece.col)
         target_dist = self._distance_to_nearest_enemy(target_row, target_col)
 
-        score += (current_dist - target_dist) * 40
+        score += (current_dist - target_dist) * 50
         if target_dist == 1:
-            score += 150
+            score += 200
         elif target_dist == 2:
-            score += 50
+            score += 80
 
-        if target_dist >= current_dist:
-            score -= 12
+        score += (target_row - piece.row) * 28
+        if piece.row < self._get_average_ai_row() and target_row > piece.row:
+            score += 45
+
+        if target_row == piece.row and target_dist >= current_dist:
+            score -= 35
 
         if capital is not None:
             current_capital_dist = abs(piece.row - capital.row) + abs(piece.col - capital.col)
             target_capital_dist = abs(target_row - capital.row) + abs(target_col - capital.col)
-            score += (current_capital_dist - target_capital_dist) * 30
+            score += (current_capital_dist - target_capital_dist) * 40
             if target_capital_dist <= 3:
-                score += 80
+                score += 120
 
-        enemy_rows = [enemy.row for enemy in self.board.player_pieces]
-        if enemy_rows:
-            avg_enemy_row = sum(enemy_rows) / len(enemy_rows)
-            preferred_direction = 1 if avg_enemy_row > piece.row else -1
-            score += max(0, (target_row - piece.row) * preferred_direction) * 18
-
-        avg_ai_row = self._get_average_ai_row()
-        if piece.row < avg_ai_row and target_row > piece.row:
-            score += 30
-        if target_row == piece.row and target_dist >= current_dist:
-            score -= 18
-
-        if capital is not None:
             current_capital_col_dist = abs(piece.col - capital.col)
             target_capital_col_dist = abs(target_col - capital.col)
-            score += max(0, current_capital_col_dist - target_capital_col_dist) * 10
+            score += max(0, current_capital_col_dist - target_capital_col_dist) * 15
+
+        if priority_enemy is not None:
+            dist = abs(priority_enemy.row - target_row) + abs(priority_enemy.col - target_col)
+            score += max(0, 130 - dist * 8)
+            if priority_enemy.piece_type == PieceType.CAPITAL:
+                score += 50
 
         for enemy in self.board.player_pieces:
             dist = abs(enemy.row - target_row) + abs(enemy.col - target_col)
             if dist == 1:
-                score += self._piece_value(enemy) + 50
+                score += self._piece_value(enemy) + 65
             elif dist == 2:
-                score += 30
-
-        if priority_enemy is not None:
-            dist = abs(priority_enemy.row - target_row) + abs(priority_enemy.col - target_col)
-            score += max(0, 90 - dist * 5)
-            if priority_enemy.piece_type == PieceType.CAPITAL:
-                score += 30
+                score += 45
 
         if active_battles:
             for battle in active_battles:
-                dist_to_attacker = abs(target_row - battle.attacker.row) + abs(target_col - battle.attacker.col)
-                dist_to_defender = abs(target_row - battle.defender.row) + abs(target_col - battle.defender.col)
                 support_range = piece.get_support_range()
-                if dist_to_attacker <= support_range or dist_to_defender <= support_range:
-                    score += 40
+                if abs(target_row - battle.attacker.row) + abs(target_col - battle.attacker.col) <= support_range or abs(target_row - battle.defender.row) + abs(target_col - battle.defender.col) <= support_range:
+                    score += 60
                     break
+
+        score += int(self._future_value(piece, target_row, target_col))
 
         if piece.piece_type == PieceType.ARTILLERY:
             for enemy in self.board.player_pieces:
                 dist = abs(enemy.row - target_row) + abs(enemy.col - target_col)
                 if 0 < dist <= 2:
-                    score += self._piece_value(enemy) // 2 + 20
+                    score += self._piece_value(enemy) * 0.3
 
         return score
 
-    def _best_move_action(self, piece, active_battles, nearest_enemy, capital):
-        moves = self.board.get_valid_moves_for_piece(piece)
-        if not moves:
-            return None, -9999
+    def _validate_candidate(self, action_type, data):
+        piece = data['piece']
+        if piece.is_in_battle or piece.is_supporting or not piece.can_act():
+            return False
+        if action_type == 'move':
+            return (data['target_row'], data['target_col']) in self.board.get_valid_moves_for_piece(piece)
+        if action_type == 'move_and_attack':
+            return data['target'] in self.board.get_adjacent_enemy_pieces(piece)
+        if action_type == 'bombard':
+            return any(data['target'] == enemy for enemy, row, col in self.board.get_valid_bombard_targets(piece))
+        if action_type == 'support':
+            return self.board.get_support_range_for_battle(data['battle'], piece)
+        return False
 
-        priority_enemy = None
-        if active_battles:
-            battle_centers = [battle.attacker if battle.attacker.owner == 'player' else battle.defender for battle in active_battles]
-            priority_enemy = min(battle_centers, key=lambda x: abs(x.row - piece.row) + abs(x.col - piece.col))
-        else:
-            priority_enemy = nearest_enemy
-
-        best_score = -9999
-        best_move = None
-        best_dist = 999
-        for row, col in moves:
-            score = self._position_score(piece, row, col, priority_enemy, capital, active_battles)
-            dist = self._distance_to_nearest_enemy(row, col)
-            if score > best_score or (score == best_score and dist < best_dist):
-                best_score = score
-                best_move = (row, col)
-                best_dist = dist
-
-        if best_move is None:
-            return None, -9999
-
-        return ('move', {'piece': piece, 'target_row': best_move[0], 'target_col': best_move[1]}), best_score
-
-    def _evaluate_all_actions(self, capital):
-        best_action = None
-        best_score = -9999
+    def _build_action_queue(self, capital):
+        import heapq
+        queue = []
+        action_id = 0
         active_battles = self.board.battle_manager.get_all_active_battles()
 
         for piece in self.board.ai_pieces:
@@ -218,100 +234,92 @@ class AI:
                 for enemy in self.board.get_adjacent_enemy_pieces(piece):
                     if enemy.owner != piece.owner:
                         score = self._attack_score(piece, enemy)
-                        if score > best_score:
-                            best_score = score
-                            best_action = ('move_and_attack', {'piece': piece, 'target': enemy, 'target_row': enemy.row, 'target_col': enemy.col})
+                        heapq.heappush(queue, (-score, action_id, ('move_and_attack', {'piece': piece, 'target': enemy, 'target_row': enemy.row, 'target_col': enemy.col})))
+                        action_id += 1
 
-            if piece.piece_type == PieceType.ARTILLERY:
-                if piece.can_act():
-                    for enemy, row, col in self.board.get_valid_bombard_targets(piece):
-                        if enemy.owner != piece.owner:
-                            score = self._bombard_score(piece, enemy)
-                            if score > best_score:
-                                best_score = score
-                                best_action = ('bombard', {'piece': piece, 'target': enemy})
-
-                if piece.can_support():
-                    for battle in active_battles:
-                        if self.board.get_support_range_for_battle(battle, piece):
-                            score = self._support_score(piece, battle)
-                            if score > best_score:
-                                best_score = score
-                                best_action = ('support', {'piece': piece, 'battle': battle, 'side': 'attacker' if battle.attacker.owner == 'ai' else 'defender'})
-
-                if piece.can_move():
-                    move_action, move_score = self._best_move_action(piece, active_battles, nearest_enemy, capital)
-                    if move_action and move_score > best_score:
-                        best_score = move_score
-                        best_action = move_action
-                continue
+            if piece.piece_type == PieceType.ARTILLERY and piece.can_act():
+                for enemy, row, col in self.board.get_valid_bombard_targets(piece):
+                    if enemy.owner != piece.owner:
+                        score = self._bombard_score(piece, enemy)
+                        heapq.heappush(queue, (-score, action_id, ('bombard', {'piece': piece, 'target': enemy})))
+                        action_id += 1
 
             if piece.can_support():
                 for battle in active_battles:
                     if self.board.get_support_range_for_battle(battle, piece):
                         score = self._support_score(piece, battle)
-                        if score > best_score:
-                            best_score = score
-                            best_action = ('support', {'piece': piece, 'battle': battle, 'side': 'attacker' if battle.attacker.owner == 'ai' else 'defender'})
+                        heapq.heappush(queue, (-score, action_id, ('support', {'piece': piece, 'battle': battle, 'side': 'attacker' if battle.attacker.owner == 'ai' else 'defender'})))
+                        action_id += 1
 
             if piece.can_move():
-                move_action, move_score = self._best_move_action(piece, active_battles, nearest_enemy, capital)
-                if move_action and move_score > best_score:
-                    best_score = move_score
-                    best_action = move_action
+                for row, col in self.board.get_valid_moves_for_piece(piece):
+                    score = self._move_score(piece, row, col, nearest_enemy, capital, active_battles)
+                    heapq.heappush(queue, (-score, action_id, ('move', {'piece': piece, 'target_row': row, 'target_col': col})))
+                    action_id += 1
 
-        return best_action or ('end_turn', {})
+        return queue
+
+    def _execute_action(self, action_type, data):
+        piece = data['piece']
+        piece.has_acted_this_turn = True
+        piece.actions_used_this_turn += 1
+
+        if action_type == 'move':
+            piece.has_moved_this_turn = True
+            self.board.move_piece(piece, data['target_row'], data['target_col'])
+        elif action_type == 'move_and_attack':
+            piece.has_moved_this_turn = True
+            piece.has_attacked_this_turn = True
+            target = data['target']
+            if target.piece_type == PieceType.ARTILLERY:
+                self.board.remove_piece(target)
+            else:
+                battle = self.board.battle_manager.create_battle(piece, target, self.board)
+                if battle:
+                    piece.has_attacked_this_turn = True
+                    piece.has_acted_this_turn = True
+            self.board.move_piece_force(piece, data['target_row'], data['target_col'])
+        elif action_type == 'bombard':
+            artillery = data['piece']
+            target = data['target']
+            damage = artillery.bombard(target)
+            if damage > 0:
+                destroyed = target.take_damage(damage)
+                if destroyed:
+                    self.board.remove_piece(target)
+            artillery.has_attacked_this_turn = True
+            artillery.has_acted_this_turn = True
+        elif action_type == 'support':
+            supporter = data['piece']
+            battle = data['battle']
+            side = data['side']
+            if self.board.battle_manager.add_support_to_battle(battle, supporter, side):
+                supporter.has_acted_this_turn = True
 
     def make_turn(self, board):
+        import heapq
         self.board = board
         self.actions_taken = 0
         self._reset_turn_status()
         actions = []
+        capital = self.board.get_capital('player')
 
         while self.actions_taken < self.max_actions:
-            action = self._evaluate_all_actions(self.board.get_capital('player'))
-            action_type, data = action[0], action[1]
-            if action_type == 'end_turn':
+            queue = self._build_action_queue(capital)
+            if not queue:
                 break
 
-            data['action_type'] = action_type
-            actions.append(data)
-            self.actions_taken += 1
-
-            piece = data['piece']
-            piece.has_acted_this_turn = True
-            piece.actions_used_this_turn += 1
-
-            if action_type == 'move':
-                piece.has_moved_this_turn = True
-                self.board.move_piece(piece, data['target_row'], data['target_col'])
-            elif action_type == 'move_and_attack':
-                piece.has_moved_this_turn = True
-                piece.has_attacked_this_turn = True
-                target = data['target']
-                if target.piece_type == PieceType.ARTILLERY:
-                    self.board.remove_piece(target)
-                else:
-                    battle = self.board.battle_manager.create_battle(piece, target, self.board)
-                    if battle:
-                        piece.has_attacked_this_turn = True
-                        piece.has_acted_this_turn = True
-                self.board.move_piece_force(piece, data['target_row'], data['target_col'])
-            elif action_type == 'bombard':
-                artillery = data['piece']
-                target = data['target']
-                damage = artillery.bombard(target)
-                if damage > 0:
-                    destroyed = target.take_damage(damage)
-                    if destroyed:
-                        self.board.remove_piece(target)
-                artillery.has_attacked_this_turn = True
-                artillery.has_acted_this_turn = True
-            elif action_type == 'support':
-                supporter = data['piece']
-                battle = data['battle']
-                side = data['side']
-                if self.board.battle_manager.add_support_to_battle(battle, supporter, side):
-                    supporter.has_acted_this_turn = True
+            while queue:
+                _, _, candidate = heapq.heappop(queue)
+                action_type, data = candidate
+                if not self._validate_candidate(action_type, data):
+                    continue
+                self._execute_action(action_type, data)
+                data['action_type'] = action_type
+                actions.append(data)
+                self.actions_taken += 1
+                break
+            else:
+                break
 
         return actions
