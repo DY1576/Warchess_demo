@@ -85,32 +85,97 @@ class AI:
         return score
 
     def _support_score(self, supporter, battle):
-        score = 70
+        score = 90
         if battle.attacker.piece_type == PieceType.CAPITAL or battle.defender.piece_type == PieceType.CAPITAL:
             score += 40
         if supporter.piece_type == PieceType.ARTILLERY:
+            score += 15
+        if supporter.piece_type == PieceType.CAVALRY:
             score += 10
         return score
 
-    def _position_score(self, piece, target_row, target_col, priority_enemy):
+    def _distance_to_nearest_enemy(self, row, col):
+        best = 999
+        for enemy in self.board.player_pieces:
+            dist = abs(enemy.row - row) + abs(enemy.col - col)
+            if dist < best:
+                best = dist
+        return best
+
+    def _get_average_ai_row(self):
+        if not self.board.ai_pieces:
+            return 0
+        return sum(piece.row for piece in self.board.ai_pieces) / len(self.board.ai_pieces)
+
+    def _position_score(self, piece, target_row, target_col, priority_enemy, capital, active_battles):
         score = 0
+        current_dist = self._distance_to_nearest_enemy(piece.row, piece.col)
+        target_dist = self._distance_to_nearest_enemy(target_row, target_col)
+
+        score += (current_dist - target_dist) * 40
+        if target_dist == 1:
+            score += 150
+        elif target_dist == 2:
+            score += 50
+
+        if target_dist >= current_dist:
+            score -= 12
+
+        if capital is not None:
+            current_capital_dist = abs(piece.row - capital.row) + abs(piece.col - capital.col)
+            target_capital_dist = abs(target_row - capital.row) + abs(target_col - capital.col)
+            score += (current_capital_dist - target_capital_dist) * 30
+            if target_capital_dist <= 3:
+                score += 80
+
+        enemy_rows = [enemy.row for enemy in self.board.player_pieces]
+        if enemy_rows:
+            avg_enemy_row = sum(enemy_rows) / len(enemy_rows)
+            preferred_direction = 1 if avg_enemy_row > piece.row else -1
+            score += max(0, (target_row - piece.row) * preferred_direction) * 18
+
+        avg_ai_row = self._get_average_ai_row()
+        if piece.row < avg_ai_row and target_row > piece.row:
+            score += 30
+        if target_row == piece.row and target_dist >= current_dist:
+            score -= 18
+
+        if capital is not None:
+            current_capital_col_dist = abs(piece.col - capital.col)
+            target_capital_col_dist = abs(target_col - capital.col)
+            score += max(0, current_capital_col_dist - target_capital_col_dist) * 10
+
         for enemy in self.board.player_pieces:
             dist = abs(enemy.row - target_row) + abs(enemy.col - target_col)
             if dist == 1:
                 score += self._piece_value(enemy) + 50
             elif dist == 2:
-                score += 15
+                score += 30
+
         if priority_enemy is not None:
             dist = abs(priority_enemy.row - target_row) + abs(priority_enemy.col - target_col)
-            score += max(0, 50 - dist * 5)
+            score += max(0, 90 - dist * 5)
+            if priority_enemy.piece_type == PieceType.CAPITAL:
+                score += 30
+
+        if active_battles:
+            for battle in active_battles:
+                dist_to_attacker = abs(target_row - battle.attacker.row) + abs(target_col - battle.attacker.col)
+                dist_to_defender = abs(target_row - battle.defender.row) + abs(target_col - battle.defender.col)
+                support_range = piece.get_support_range()
+                if dist_to_attacker <= support_range or dist_to_defender <= support_range:
+                    score += 40
+                    break
+
         if piece.piece_type == PieceType.ARTILLERY:
             for enemy in self.board.player_pieces:
                 dist = abs(enemy.row - target_row) + abs(enemy.col - target_col)
                 if 0 < dist <= 2:
-                    score += self._piece_value(enemy) // 2
+                    score += self._piece_value(enemy) // 2 + 20
+
         return score
 
-    def _best_move_action(self, piece, active_battles, nearest_enemy):
+    def _best_move_action(self, piece, active_battles, nearest_enemy, capital):
         moves = self.board.get_valid_moves_for_piece(piece)
         if not moves:
             return None, -9999
@@ -124,11 +189,14 @@ class AI:
 
         best_score = -9999
         best_move = None
+        best_dist = 999
         for row, col in moves:
-            score = self._position_score(piece, row, col, priority_enemy)
-            if score > best_score:
+            score = self._position_score(piece, row, col, priority_enemy, capital, active_battles)
+            dist = self._distance_to_nearest_enemy(row, col)
+            if score > best_score or (score == best_score and dist < best_dist):
                 best_score = score
                 best_move = (row, col)
+                best_dist = dist
 
         if best_move is None:
             return None, -9999
@@ -172,7 +240,7 @@ class AI:
                                 best_action = ('support', {'piece': piece, 'battle': battle, 'side': 'attacker' if battle.attacker.owner == 'ai' else 'defender'})
 
                 if piece.can_move():
-                    move_action, move_score = self._best_move_action(piece, active_battles, nearest_enemy)
+                    move_action, move_score = self._best_move_action(piece, active_battles, nearest_enemy, capital)
                     if move_action and move_score > best_score:
                         best_score = move_score
                         best_action = move_action
@@ -187,7 +255,7 @@ class AI:
                             best_action = ('support', {'piece': piece, 'battle': battle, 'side': 'attacker' if battle.attacker.owner == 'ai' else 'defender'})
 
             if piece.can_move():
-                move_action, move_score = self._best_move_action(piece, active_battles, nearest_enemy)
+                move_action, move_score = self._best_move_action(piece, active_battles, nearest_enemy, capital)
                 if move_action and move_score > best_score:
                     best_score = move_score
                     best_action = move_action
@@ -238,6 +306,7 @@ class AI:
                     if destroyed:
                         self.board.remove_piece(target)
                 artillery.has_attacked_this_turn = True
+                artillery.has_acted_this_turn = True
             elif action_type == 'support':
                 supporter = data['piece']
                 battle = data['battle']

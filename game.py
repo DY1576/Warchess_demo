@@ -666,7 +666,7 @@ class Game:
                     destroyed = target.take_damage(damage)
                     if destroyed:
                         self.board.remove_piece(target)
-                artillery.has_acted_this_turn = True
+                artillery.has_attacked_this_turn = True
 
             elif action_type == 'support':
                 supporter = action['piece']
