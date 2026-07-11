@@ -128,6 +128,10 @@ class Infantry(Piece):
     """步兵"""
     def __init__(self, owner, row, col):
         super().__init__(PieceType.INFANTRY, owner, row, col)
+        
+    def can_attack(self):
+        # 覆盖父类的默认 False，只要能行动就能攻击
+        return self.can_act()
 
 
 class Cavalry(Piece):
@@ -141,13 +145,15 @@ class Cavalry(Piece):
         return self.actions_used_this_turn < 2
 
     def can_move(self):
-        return self.can_act() and not self.has_attacked_this_turn
+        # 移除 has_attacked_this_turn 的限制，只要行动点数没满就能跑
+        return self.can_act()
 
     def can_attack(self):
-        return self.can_act() and not self.has_attacked_this_turn
+        # 移除 has_attacked_this_turn 的限制，允许连续攻击两次
+        return self.can_act()
 
     def can_support(self):
-        return self.can_act() and not self.has_attacked_this_turn
+        return self.can_act()
 
 
 class Artillery(Piece):

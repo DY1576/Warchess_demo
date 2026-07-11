@@ -73,8 +73,8 @@ class AI:
                 continue # 炮兵不移动，直接结算下一颗棋子
 
             # 2. 评估直接攻击
-            enemies = self.board.get_adjacent_enemy_pieces(piece)
-            if piece.can_act() and (piece.piece_type == PieceType.CAVALRY and piece.can_attack() or piece.piece_type == PieceType.INFANTRY):
+            if piece.can_attack():
+                enemies = self.board.get_adjacent_enemy_pieces(piece)
                 for enemy in enemies:
                     if enemy.piece_type == PieceType.CAPITAL:
                         score = 1000 # 斩首最高优先级
@@ -136,10 +136,14 @@ class AI:
             if action_type == 'move_and_attack':
                 piece.has_moved_this_turn = True
                 piece.has_attacked_this_turn = True
-                # 预演移动，防止下一个计算基于旧位置
                 self.board.move_piece_force(piece, data['target_row'], data['target_col']) 
             elif action_type == 'move':
                 piece.has_moved_this_turn = True
                 self.board.move_piece(piece, data['target_row'], data['target_col'])
+            # 【新增】脑内预演锁定状态，防止它在同一个回合对同一个棋子下达两次支援/轰炸指令
+            elif action_type == 'support':
+                piece.is_supporting = True 
+            elif action_type == 'bombard':
+                piece.has_attacked_this_turn = True
 
         return actions
