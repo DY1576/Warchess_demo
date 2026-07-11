@@ -646,14 +646,15 @@ class Game:
                 piece = action['piece']
                 target = action['target']
                 row, col = action['target_row'], action['target_col']
-                self.board.move_piece(piece, row, col)
                 if target.piece_type == PieceType.ARTILLERY:
+                    self.board.move_piece_force(piece, row, col)
                     self.board.remove_piece(target)
                     piece.has_attacked_this_turn = True
                     piece.has_acted_this_turn = True
                 else:
                     battle = self.battle_manager.create_battle(piece, target, self.board)
                     if battle:
+                        self.board.move_piece_force(piece, row, col)
                         piece.has_attacked_this_turn = True
                         piece.has_acted_this_turn = True
 
